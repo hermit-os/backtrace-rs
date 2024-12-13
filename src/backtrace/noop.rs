@@ -10,6 +10,8 @@ pub fn trace(_cb: &mut dyn FnMut(&super::Frame) -> bool) {}
 #[derive(Clone)]
 pub struct Frame;
 
+compile_error!();
+
 impl Frame {
     pub fn ip(&self) -> *mut c_void {
         null_mut()

@@ -1,6 +1,9 @@
 use super::mystd::ffi::{OsStr, OsString};
 use super::mystd::fs;
+#[cfg(not(target_os = "hermit"))]
 use super::mystd::os::unix::ffi::{OsStrExt, OsStringExt};
+#[cfg(target_os = "hermit")]
+use super::mystd::os::hermit::ffi::{OsStrExt, OsStringExt};
 use super::mystd::path::{Path, PathBuf};
 use super::Either;
 use super::{gimli, Context, Endian, EndianSlice, Mapping, Stash, Vec};

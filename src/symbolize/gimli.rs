@@ -184,10 +184,18 @@ impl<'data> Context<'data> {
     }
 }
 
+#[cfg(not(target_os = "hermit"))]
 fn mmap(path: &Path) -> Option<Mmap> {
     let file = File::open(path).ok()?;
     let len = file.metadata().ok()?.len().try_into().ok()?;
     unsafe { Mmap::map(&file, len) }
+}
+
+#[cfg(target_os = "hermit")]
+fn mmap(path: &Path) -> Option<Mmap> {
+    // let file = File::open(path).ok()?;
+    // let len = file.metadata().ok()?.len().try_into().ok()?;
+    unsafe { Mmap::map() }
 }
 
 cfg_if::cfg_if! {
@@ -245,7 +253,33 @@ cfg_if::cfg_if! {
     } else {
         // Everything else should doesn't know how to load native libraries.
         fn native_libraries() -> Vec<Library> {
-            Vec::new()
+            // dbg!();
+
+            #[repr(C)]
+            pub struct Segment {
+                len: usize,
+                svma: usize,
+            }
+
+            extern "C" {
+                static HERMIT_SEGMENTS: &'static [Segment];
+                static HERMIT_BIAS: usize;
+            }
+
+            let library = Library {
+                name: mystd::env::current_exe().unwrap().into_os_string(),
+                segments: unsafe { HERMIT_SEGMENTS.iter() }.map(|segment| {
+                    
+                    // println!("p_memsz = {:#x}", segment.len);
+                    // println!("p_vaddr = {:#x}", segment.svma);
+                    LibrarySegment {
+                    len: segment.len,
+                    stated_virtual_memory_address: segment.svma,
+                }}).collect(),
+                bias: unsafe { HERMIT_BIAS },
+            };
+
+            vec![library]
         }
     }
 }
@@ -410,8 +444,20 @@ impl Cache {
 }
 
 pub unsafe fn resolve(what: ResolveWhat<'_>, cb: &mut dyn FnMut(&super::Symbol)) {
+    // match what {
+    //     ResolveWhat::Address(addr) => {dbg!(addr);},
+    //     ResolveWhat::Frame(_frame) => {dbg!();},
+    // };
     let addr = what.address_or_ip();
     let mut call = |sym: Symbol<'_>| {
+        // match &sym {
+        //     Symbol::Frame { addr, location, name } => {
+        //         dbg!(addr);
+        //         dbg!(location.is_some());
+        //         dbg!(name.is_some());
+        //     },
+        //     Symbol::Symtab { .. } => dbg!(),
+        // };
         // Extend the lifetime of `sym` to `'static` since we are unfortunately
         // required to here, but it's only ever going out as a reference so no
         // reference to it should be persisted beyond this frame anyway.
@@ -420,11 +466,13 @@ pub unsafe fn resolve(what: ResolveWhat<'_>, cb: &mut dyn FnMut(&super::Symbol))
     };
 
     Cache::with_global(|cache| {
+        // dbg!();
         let (lib, addr) = match cache.avma_to_svma(addr.cast_const().cast::<u8>()) {
             Some(pair) => pair,
             None => return,
         };
 
+        // dbg!();
         // Finally, get a cached mapping or create a new mapping for this file, and
         // evaluate the DWARF info to find the file/line/name for this address.
         let (cx, stash) = match cache.mapping_for_lib(lib) {
@@ -432,6 +480,7 @@ pub unsafe fn resolve(what: ResolveWhat<'_>, cb: &mut dyn FnMut(&super::Symbol))
             None => return,
         };
         let mut any_frames = false;
+        // dbg!();
         if let Ok(mut frames) = cx.find_frames(stash, addr as u64) {
             while let Ok(Some(frame)) = frames.next() {
                 any_frames = true;
@@ -446,6 +495,7 @@ pub unsafe fn resolve(what: ResolveWhat<'_>, cb: &mut dyn FnMut(&super::Symbol))
                 });
             }
         }
+        // dbg!();
         if !any_frames {
             if let Some((object_cx, object_addr)) = cx.object.search_object_map(addr as u64) {
                 if let Ok(mut frames) = object_cx.find_frames(stash, object_addr) {
@@ -460,6 +510,7 @@ pub unsafe fn resolve(what: ResolveWhat<'_>, cb: &mut dyn FnMut(&super::Symbol))
                 }
             }
         }
+        // dbg!();
         if !any_frames {
             if let Some(name) = cx.object.search_symtab(addr as u64) {
                 call(Symbol::Symtab { name });
